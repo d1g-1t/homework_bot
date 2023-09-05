@@ -2,12 +2,10 @@ import os
 import time
 import logging
 from logging.handlers import RotatingFileHandler
-from http import HTTPStatus
+from json.decoder import JSONDecodeError
 
 import requests
-from json.decoder import JSONDecodeError
 from dotenv import load_dotenv
-
 import telegram
 
 load_dotenv()
@@ -75,26 +73,27 @@ def get_api_answer(timestamp: float) -> dict:
                                        headers=HEADERS,
                                        params=params
                                        )
+        if homework_status.status_code != 200:
+            error_message = (
+                f'Ошибка при запросе к API "Яндекс.Домашка". '
+                f'Статус код: {homework_status.status_code}'
+            )
+            logger.error(error_message)
+            raise Exception(error_message)
+        homework_status.raise_for_status()
     except requests.exceptions.RequestException as error:
-        logger.error(f'Ошибка направления запроса к '
-                     f'API "Яндекс.Домашка": {error}.'
-                     )
-        raise Exception(f'Ошибка направления запроса к '
-                        f'API "Яндекс.Домашка": {error}.'
-                        )
-    if homework_status.status_code != HTTPStatus.OK:
-        status_code = homework_status.status_code
-        logger.error(f'Ошибка {status_code} при направлении '
-                     f'запроса к API "Яндекс.Домашка".'
-                     )
-        raise Exception(f'Ошибка {status_code} при направлении '
-                        f'запроса к API "Яндекс.Домашка".'
-                        )
+        error_message = (
+            f'Ошибка направления запроса к API "Яндекс.Домашка": {error}.'
+        )
+        logger.error(error_message)
+        raise Exception(error_message)
+
     try:
         return homework_status.json()
     except JSONDecodeError as response_error:
-        logger.error(f'Ошибка при получении ответа: {response_error}')
-        raise JSONDecodeError(f'Ошибка при получении ответа: {response_error}')
+        error_message = f'Ошибка при получении ответа: {response_error}'
+        logger.error(error_message)
+        raise JSONDecodeError(error_message)
 
 
 def check_response(response: dict) -> dict:
@@ -116,19 +115,15 @@ def check_response(response: dict) -> dict:
 def parse_status(homework):
     """Проверка статуса конкретной домашней работы."""
     homework_name = homework.get('homework_name')
-    if 'status' in homework:
-        homework_status = homework['status']
-    else:
+    if homework_name is None:
+        raise KeyError('Ключ "homework_name" отсутствует.')
+    if 'status' not in homework:
         raise KeyError('Ключ "status" отсутствует.')
-    if homework_name is not None and homework_status is not None:
-        if homework_status in HOMEWORK_VERDICTS:
-            verdict = HOMEWORK_VERDICTS.get(homework_status)
-            return ('Изменился статус проверки '
-                    + f'работы "{homework_name}". {verdict}')
-        else:
-            raise SystemError('Неизвестный статус')
-    else:
-        raise KeyError('Ключи отсутствуют.')
+    homework_status = homework['status']
+    if homework_status not in HOMEWORK_VERDICTS:
+        raise SystemError('Неизвестный статус')
+    verdict = HOMEWORK_VERDICTS.get(homework_status)
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main() -> None:
